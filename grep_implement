@@ -1,0 +1,143 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <linux/fs.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <strings.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <iostream>
+#include <ctype.h>
+#include <errno.h>
+#include <dirent.h>
+#include <limits.h>
+#include <regex.h>
+
+using namespace std;
+
+void match_single_file(char * file , char * keyWord){
+	int fd,r,x=0,y=0,status,status_bin;
+	char binary[10];
+	char lineBox[100];
+	FILE * fp;
+	size_t nmatch = 1;
+	int read_bin;
+	regmatch_t pmatch[1];
+	struct stat file_statt;
+
+	/* Regular expression work*/
+	regex_t reg,reg_bin;
+	regcomp(&reg,keyWord,REG_ICASE);
+	regcomp(&reg_bin,"\n",REG_ICASE|REG_NEWLINE);
+	
+	if(stat(file, &file_statt) == 0)
+	{
+		if( (fd = open(file,O_RDONLY) ) != -1)
+		{
+			fp = fopen(file,"rb");
+		
+			while( fgets(lineBox,100,fp) != NULL)		//get one line to buffer to check with Regexec
+			{
+				status = regexec(&reg,lineBox,nmatch,pmatch,0);
+				status_bin = regexec(&reg_bin,lineBox,nmatch,pmatch,0);
+				
+				if(status == 0  && status_bin == 1)	/*if match user input and can't find '\n',it would be a matched binary file */
+				{
+					cout<<"Binary file "<<file<<": matches"<<endl;
+				}
+				else if(status == 0)			//else other matched regular files
+				{
+					cout<<file<<": "<<lineBox<<endl;
+				}
+			}
+			regfree(&reg);					// free them regex_t 
+			regfree(&reg_bin);
+			fclose(fp);
+		}
+		else
+		{
+			fprintf(stderr, "'%s': %s\n",file, strerror(errno));
+			exit (EXIT_FAILURE);
+		}
+	}
+}
+
+void match_recursive_direct(char * user_direct, char * keyWord){
+	DIR * direct;
+	direct = opendir(user_direct);
+	char whole_direct[PATH_MAX];
+	struct stat dir_statt;
+	
+	if(!direct)
+	{
+		fprintf(stderr, "'%s': %s\n",user_direct, strerror(errno));
+		exit (EXIT_FAILURE);
+	}
+	while(true)
+	{
+		struct dirent * enter;
+		const char * dir_name;
+		enter = readdir(direct);
+		if(!enter){break;};
+		
+		dir_name = enter->d_name;
+
+		/* check the dir or file and call function to work*/
+		strcpy(whole_direct,user_direct);
+		strcat(whole_direct,"/");
+		strcat(whole_direct,dir_name);
+		stat(whole_direct, &dir_statt);
+		if(S_ISREG(dir_statt.st_mode))
+		{
+			match_single_file(whole_direct,keyWord);
+		}
+		
+		/* check that the directory is not dir_name or dii_name's parents*/
+		if(enter->d_type & DT_DIR)
+		{
+			if(strcmp(dir_name,"..")!=0 && strcmp(dir_name,".")!=0)
+			{
+				int path_length;
+				char path[PATH_MAX];
+
+				path_length = snprintf(path, PATH_MAX, "%s/%s",user_direct,dir_name);
+				if(path_length >= PATH_MAX)
+				{
+					fprintf(stderr, "Path length is too long!\n");
+					exit(EXIT_FAILURE);
+				}
+				/* Recursively call*/
+				match_recursive_direct(path,keyWord);
+			}
+		}
+	}
+	if(closedir(direct) )
+	{
+		fprintf(stderr, "Could not close '%s': %s\n",user_direct, strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+}
+
+
+
+	int main(int argc ,char **argv)
+	{
+		
+		struct stat statt;
+		for(int i=2; i<argc; i++)
+		{
+			if(stat(argv[i], &statt) == 0)	
+			{
+				if(S_ISREG(statt.st_mode))
+				{ 
+					match_single_file(argv[i],argv[1]);	
+				}
+				else
+				{
+					match_recursive_direct(argv[i],argv[1]);
+				}
+			}
+		}		
+		return 0;
+	}
